@@ -36,24 +36,83 @@ Vérifier avant certbot : `dig +short moulin.marabu.services` doit renvoyer `168
 
 ### 1.3 Nginx
 
-Les deux fichiers sont dans le dépôt (`deploy/nginx/`). Depuis ta machine :
+Deux fichiers (copiés aussi dans le dépôt, `deploy/nginx/`).
+
+**En-têtes de sécurité** : `/etc/nginx/snippets/moulin-headers.conf`
 
 ```bash
-scp deploy/nginx/moulin-headers.conf deploy/nginx/moulin.marabu.services admin_marabu@168.231.106.21:/tmp/
+sudo nano /etc/nginx/snippets/moulin-headers.conf
 ```
 
-Puis sur le VPS :
+```nginx
+# /etc/nginx/snippets/moulin-headers.conf
+# Inclus dans chaque location qui sert des fichiers : un add_header dans un location
+# annule tous ceux hérités du server.
+add_header Strict-Transport-Security "max-age=31536000" always;
+add_header X-Content-Type-Options "nosniff" always;
+add_header X-Frame-Options "DENY" always;
+add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()" always;
+# Scripts : uniquement ceux du site. Styles et polices : le site + Google Fonts (index.html).
+# 'unsafe-inline' sur les styles : attributs style de React et animations GSAP.
+add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" always;
+```
+
+**Site** : `/etc/nginx/sites-available/moulin.marabu.services`
 
 ```bash
-sudo mv /tmp/moulin-headers.conf /etc/nginx/snippets/
-sudo mv /tmp/moulin.marabu.services /etc/nginx/sites-available/
-sudo chown root:root /etc/nginx/snippets/moulin-headers.conf /etc/nginx/sites-available/moulin.marabu.services
+sudo nano /etc/nginx/sites-available/moulin.marabu.services
+```
+
+```nginx
+# /etc/nginx/sites-available/moulin.marabu.services
+# Version HTTP : certbot --nginx ajoute ensuite le bloc 443 et la redirection.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name moulin.marabu.services;
+
+    root /home/admin_marabu/apps/moulin/front;
+    index index.html;
+
+    gzip on;
+    gzip_types text/css application/javascript image/svg+xml;
+
+    # Fichiers cachés (.git, .env…) : jamais servis. .well-known reste accessible pour certbot.
+    location ~ /\.(?!well-known/) {
+        deny all;
+    }
+
+    # Assets Vite (nom avec hash) : cache long
+    location /assets/ {
+        include snippets/moulin-headers.conf;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        try_files $uri =404;
+    }
+
+    # Le reste (index.html, favicon…) : jamais mis en cache
+    location / {
+        include snippets/moulin-headers.conf;
+        add_header Cache-Control "no-cache" always;
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+⚠️ Piège Nginx : un `add_header` dans un `location` **annule** tous ceux hérités du `server`. D'où le
+snippet inclus dans chaque `location`.
+
+**Activer le site** :
+
+```bash
 sudo ln -s /etc/nginx/sites-available/moulin.marabu.services /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-Si le VPS n'a pas d'IPv6, retirer la ligne `listen [::]:80;`. Pare-feu : rien à ouvrir (80 et 443 le sont
-déjà).
+- Erreur sur `[::]:80` → le VPS n'a pas d'IPv6 : retirer la ligne `listen [::]:80;`.
+- Erreur `"gzip" directive is duplicate` → gzip est déjà réglé dans `nginx.conf` : retirer les deux lignes
+  `gzip` du site.
+- Pare-feu : rien à ouvrir (80 et 443 le sont déjà).
 
 ### 1.4 HTTPS
 
