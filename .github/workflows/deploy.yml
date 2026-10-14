@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  APP_DIR: /home/dev-issouf/apps/moulin/front
+  APP_DIR: /home/admin_marabu/apps/moulin/front
   SITE_URL: https://moulin.marabu.services
 
 jobs:

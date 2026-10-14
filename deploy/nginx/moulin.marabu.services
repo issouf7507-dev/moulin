@@ -5,7 +5,7 @@ server {
     listen [::]:80;
     server_name moulin.marabu.services;
 
-    root /home/dev-issouf/apps/moulin/front;
+    root /home/admin_marabu/apps/moulin/front;
     index index.html;
 
     gzip on;
