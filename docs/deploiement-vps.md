@@ -124,7 +124,7 @@ sudo certbot --nginx -d moulin.marabu.services
 
 ## 2. Clé SSH de déploiement
 
-Clé dédiée, sans passphrase (le workflow n'en gère pas) :
+Clé dédiée (avec ou sans passphrase : voir `SSH_PASSPHRASE`, section 3) :
 
 ```bash
 ssh-keygen -t ed25519 -f ~/.ssh/deploy_moulin -C "ci-deploy-moulin" -N ""
@@ -144,7 +144,17 @@ gh secret set SSH_HOST -R issouf7507-dev/moulin --body 168.231.106.21
 gh secret set SSH_USER -R issouf7507-dev/moulin --body admin_marabu
 # seulement si SSH n'est pas sur le port 22 :
 gh secret set SSH_PORT -R issouf7507-dev/moulin --body 22
+# seulement si la clé a une passphrase (saisie masquée) :
+gh secret set SSH_PASSPHRASE -R issouf7507-dev/moulin
 ```
+
+| Secret            | Valeur                                                               |
+| ----------------- | -------------------------------------------------------------------- |
+| `SSH_PRIVATE_KEY` | contenu complet de la clé **privée** (lignes `BEGIN`/`END` incluses) |
+| `SSH_HOST`        | `168.231.106.21`                                                     |
+| `SSH_USER`        | `admin_marabu`                                                       |
+| `SSH_PORT`        | port SSH (`22` par défaut ; facultatif)                              |
+| `SSH_PASSPHRASE`  | facultatif, seulement si la clé a une passphrase                     |
 
 ---
 
@@ -167,6 +177,7 @@ Puis ouvrir le site et regarder la console du navigateur : aucune erreur `Conten
 
 | Symptôme                                         | Cause probable                                                                          |
 | ------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| `Clé SSH refusée` (étape Préparer SSH)           | `SSH_PASSPHRASE` absente ou fausse pour une clé protégée                                |
 | `Permission denied (publickey)`                  | clé privée mal collée, ou clé publique absente de `~/.ssh/authorized_keys` de `admin_marabu` |
 | `/home/admin_marabu/apps/moulin/front absent`      | section 1.1 pas faite                                                                   |
 | « Vérifier que le site répond » échoue           | DNS, Nginx (`sudo nginx -t`) ou HTTPS pas encore en place (1.2 à 1.4)                   |
