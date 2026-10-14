@@ -1,0 +1,109 @@
+name: Deploy
+
+# SPA Vite : `dist/` est copié sur le VPS et servi tel quel par Nginx (pas de PM2).
+# Un push sur main déploie ; le déploiement ne part que si le lint et le build passent.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Jamais deux déploiements en même temps (le second attend la fin du premier)
+concurrency:
+  group: deploy-moulin
+  cancel-in-progress: false
+
+env:
+  APP_DIR: /home/admin_marabu/apps/moulin/front
+  SITE_URL: https://moulin.marabu.services
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Version de pnpm lue dans `packageManager` (package.json)
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Préparer SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT || '22' }}
+          SSH_PASSPHRASE: ${{ secrets.SSH_PASSPHRASE }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          # La clé est chargée dans un ssh-agent partagé avec les étapes suivantes.
+          # Avec SSH_PASSPHRASE, ssh-add la lit via un askpass qui la prend dans
+          # l'environnement : elle n'est jamais écrite sur le disque.
+          echo "SSH_AUTH_SOCK=/tmp/ssh-agent.sock" >> "$GITHUB_ENV"
+          ssh-agent -a /tmp/ssh-agent.sock > /dev/null
+          export SSH_AUTH_SOCK=/tmp/ssh-agent.sock
+          if [ -n "$SSH_PASSPHRASE" ]; then
+            printf '#!/bin/sh\nprintf "%%s\\n" "$SSH_PASSPHRASE"\n' > ~/.ssh/askpass
+            chmod 700 ~/.ssh/askpass
+            # Mauvaise passphrase : ssh-add redemanderait sans fin, d'où le timeout
+            SSH_ASKPASS=~/.ssh/askpass SSH_ASKPASS_REQUIRE=force DISPLAY=:0 \
+              timeout 15 ssh-add ~/.ssh/deploy_key < /dev/null \
+              || { echo "::error::Clé SSH refusée : vérifier SSH_PASSPHRASE"; exit 1; }
+            rm ~/.ssh/askpass
+          else
+            timeout 15 ssh-add ~/.ssh/deploy_key < /dev/null \
+              || { echo "::error::Clé SSH refusée : protégée par passphrase ? Ajouter SSH_PASSPHRASE"; exit 1; }
+          fi
+          rm ~/.ssh/deploy_key
+
+          ssh-keyscan -p "$SSH_PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          cat > ~/.ssh/config <<CONFIG
+          Host vps
+            HostName $SSH_HOST
+            Port $SSH_PORT
+            User $SSH_USER
+          CONFIG
+
+      - name: Copier dist/ sur le VPS
+        run: |
+          ssh vps "test -d '$APP_DIR'" || { echo "::error::$APP_DIR absent sur le VPS (voir docs/deploiement-vps.md, 1.1)"; exit 1; }
+          # 1. Les nouveaux assets d'abord (noms hashés : ils ne remplacent rien),
+          #    pour que l'ancien index.html continue de marcher pendant la copie.
+          rsync -az --chmod=D755,F644 dist/assets/ "vps:$APP_DIR/assets/"
+          # 2. Puis index.html et le reste, en supprimant ce qui n'existe plus.
+          rsync -az --delete --chmod=D755,F644 dist/ "vps:$APP_DIR/"
+
+      - name: Vérifier que le site répond
+        run: |
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$SITE_URL/") && [ "$code" = 200 ] && exit 0
+            echo "Tentative $i : HTTP $code"; sleep 5
+          done
+          echo "::error::$SITE_URL ne répond pas 200"; exit 1

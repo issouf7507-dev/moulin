@@ -1,0 +1,32 @@
+# /etc/nginx/sites-available/moulin.marabu.services
+# Version HTTP : certbot --nginx ajoute ensuite le bloc 443 et la redirection.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name moulin.marabu.services;
+
+    root /home/admin_marabu/apps/moulin/front;
+    index index.html;
+
+    gzip on;
+    gzip_types text/css application/javascript image/svg+xml;
+
+    # Fichiers cachés (.git, .env…) : jamais servis. .well-known reste accessible pour certbot.
+    location ~ /\.(?!well-known/) {
+        deny all;
+    }
+
+    # Assets Vite (nom avec hash) : cache long
+    location /assets/ {
+        include snippets/moulin-headers.conf;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        try_files $uri =404;
+    }
+
+    # Le reste (index.html, favicon…) : jamais mis en cache
+    location / {
+        include snippets/moulin-headers.conf;
+        add_header Cache-Control "no-cache" always;
+        try_files $uri $uri/ /index.html;
+    }
+}
